@@ -49,7 +49,7 @@ import java.util.Set;
  */
 public class WificondScannerImpl extends WifiScannerImpl implements Handler.Callback {
     private static final String TAG = "WificondScannerImpl";
-    private static final boolean DBG = false;
+    private static boolean DBG = Log.isLoggable(TAG, Log.DEBUG);
 
     public static final String BACKGROUND_PERIOD_ALARM_TAG = TAG + " Background Scan Period";
     public static final String TIMEOUT_ALARM_TAG = TAG + " Scan Timeout";
@@ -445,7 +445,7 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
 
             if (newScanSettings.backgroundScanActive || newScanSettings.singleScanActive) {
                 boolean success = false;
-                Set<Integer> freqs;
+                Set<Integer> freqs = null;
                 if (!allFreqs.isEmpty()) {
                     pauseHwPnoScan();
                     freqs = allFreqs.getScanFreqs();

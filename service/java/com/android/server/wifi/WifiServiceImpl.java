@@ -928,6 +928,10 @@ public class WifiServiceImpl extends IWifiManager.Stub {
             stopSoftAp();
         }
 
+        if(apEnabled  && isExtendingNetworkCoverage()) {
+            mWifiController.sendMessage(CMD_SET_AP, 0, 0);
+        }
+
         mWifiController.sendMessage(CMD_WIFI_TOGGLED);
         return true;
     }
@@ -2513,6 +2517,9 @@ public class WifiServiceImpl extends IWifiManager.Stub {
         mWifiInjector.getWifiLastResortWatchdog().enableVerboseLogging(verbose);
         mWifiInjector.getWifiBackupRestore().enableVerboseLogging(verbose);
         LogcatLog.enableVerboseLogging(verbose);
+        int debug = SystemProperties.getInt("vendor.qcom.wifi.debug", 0);
+        mWifiController.enableVerboseLogging(debug);
+
     }
 
     @Override
@@ -2589,6 +2596,11 @@ public class WifiServiceImpl extends IWifiManager.Stub {
     @Override
     public boolean getWifiStaSapConcurrency() {
         return mWifiApConfigStore.getStaSapConcurrency();
+    }
+
+    @Override
+    public boolean isExtendingNetworkCoverage() {
+        return mWifiStateMachine.isExtendingNetworkCoverage();
     }
 
     private boolean startDualSapMode(boolean enable) {

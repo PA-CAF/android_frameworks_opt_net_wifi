@@ -212,6 +212,14 @@ public class WifiConnectivityManager {
         mLocalLog.log(log);
     }
 
+    void enableVerboseLogging(int verbose) {
+        if (verbose > 0) {
+            mDbg = true;
+        } else {
+            mDbg = false;
+        }
+    }
+
     // A periodic/PNO scan will be rescheduled up to MAX_SCAN_RESTART_ALLOWED times
     // if the start scan command failed. An timer is used here to make it a deferred retry.
     private final AlarmManager.OnAlarmListener mRestartScanListener =
@@ -366,7 +374,7 @@ public class WifiConnectivityManager {
             }
 
             if (mDbg) {
-                localLog("AllSingleScanListener onFullResult: " + fullScanResult.SSID
+                Log.d(TAG,"AllSingleScanListener onFullResult: " + fullScanResult.SSID
                         + " capabilities " + fullScanResult.capabilities);
             }
 

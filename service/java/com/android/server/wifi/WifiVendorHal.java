@@ -79,6 +79,8 @@ import com.android.server.wifi.util.NativeUtil;
 import java.util.ArrayList;
 import java.util.Set;
 
+import android.os.SystemProperties;
+
 /**
  * Vendor HAL via HIDL
  */
@@ -112,6 +114,8 @@ public class WifiVendorHal {
                 enter("verbose=false").flush();
                 mVerboseLog = sNoLog;
             }
+            int debug = SystemProperties.getInt("vendor.qcom.wifi.debug", 0);
+            mHalDeviceManager.enableVerboseLogging(debug);
         }
     }
 

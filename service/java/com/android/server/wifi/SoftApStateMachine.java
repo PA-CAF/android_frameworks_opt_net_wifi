@@ -35,6 +35,7 @@ import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiInfo;
 import android.os.BatteryStats;
 import android.os.INetworkManagementService;
 import android.os.Message;
@@ -48,7 +49,7 @@ import com.android.internal.app.IBatteryStats;
 import com.android.internal.util.Protocol;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
-
+import com.android.server.wifi.util.ApConfigUtil;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -74,6 +75,8 @@ public class SoftApStateMachine extends StateMachine {
 
     private WifiNative mWifiNative;
     private WifiInjector mWifiInjector;
+    private WifiApConfigStore mWifiApConfigStore;
+    private WifiConfigManager mWifiConfigManager;
     private INetworkManagementService mNwService;
     private ConnectivityManager mCm;
 
@@ -121,6 +124,8 @@ public class SoftApStateMachine extends StateMachine {
         mContext = context;
         mWifiInjector = wifiInjector;
         mWifiStateTracker = wifiInjector.getWifiStateTracker();
+        mWifiConfigManager = wifiInjector.getWifiConfigManager();
+        mWifiApConfigStore = wifiInjector.getWifiApConfigStore();
         mWifiNative = wifiNative;
         mNwService = NwService;
         mBatteryStats = BatteryStats;
@@ -138,6 +143,13 @@ public class SoftApStateMachine extends StateMachine {
         } else {
             DBG = false;
         }
+    }
+
+    /* API to check whether WifiConfig shares its network or not */
+    public boolean isExtendingNetworkCoverage() {
+        WifiStateMachine mWifiStateMachine = mWifiInjector.getWifiStateMachine();
+        WifiConfiguration currentStaConfig = mWifiStateMachine.getCurrentWifiConfiguration();
+        return (currentStaConfig != null && currentStaConfig.shareThisAp);
     }
 
     public void setSoftApInterfaceName(String iface) {
@@ -336,6 +348,28 @@ public class SoftApStateMachine extends StateMachine {
                 // the enabled broadcast, but since we had an error getting the name, we most likely
                 // won't be able to fully start softap mode.
             }
+
+
+            WifiStateMachine mWifiStateMachine = mWifiInjector.getWifiStateMachine();
+            WifiConfiguration currentStaConfig = mWifiStateMachine.getCurrentWifiConfiguration();
+            if (currentStaConfig != null && currentStaConfig.shareThisAp) {
+                config = new SoftApModeConfiguration(mMode, currentStaConfig);
+                currentStaConfig = mWifiConfigManager.getConfiguredNetworkWithPassword(currentStaConfig.networkId);
+                config.mConfig.SSID = ApConfigUtil.removeDoubleQuotes(currentStaConfig.SSID);
+                config.mConfig.apBand = currentStaConfig.apBand;
+                config.mConfig.apChannel = currentStaConfig.apChannel;
+                config.mConfig.hiddenSSID = currentStaConfig.hiddenSSID;
+                config.mConfig.preSharedKey = ApConfigUtil.removeDoubleQuotes(currentStaConfig.preSharedKey);
+                config.mConfig.allowedKeyManagement = currentStaConfig.allowedKeyManagement;
+                mSoftApChannel = currentStaConfig.apChannel;
+                WifiInfo mWifiInfo = mWifiStateMachine.getWifiInfo();
+                if (mWifiInfo != null && config.mConfig.apChannel == 0) {
+                    config.mConfig.apChannel = ApConfigUtil.convertFrequencyToChannel(mWifiInfo.getFrequency());
+                    mSoftApChannel = config.mConfig.apChannel;
+                }
+           } else if (currentStaConfig != null && currentStaConfig.shareThisAp == false) {
+                mSoftApChannel = 0;
+           }
 
             checkAndSetConnectivityInstance();
             mSoftApManager = mWifiInjector.makeSoftApManager(mNwService,

@@ -416,6 +416,10 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
         mPollRssiIntervalMsecs = newPollIntervalMsecs;
     }
 
+    public boolean isExtendingNetworkCoverage() {
+            return (mSoftApStateMachine != null && mSoftApStateMachine.isExtendingNetworkCoverage());
+    }
+
     /**
      * Method to clear {@link #mTargetRoamBSSID} and reset the the current connected network's
      * bssid in wpa_supplicant after a roam/connect attempt.
@@ -1344,6 +1348,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
      * @param verbose int logging level to use
      */
     public void enableVerboseLogging(int verbose) {
+        int debug = SystemProperties.getInt("vendor.qcom.wifi.debug", 0);
         if (verbose > 0) {
             mVerboseLoggingEnabled = true;
             setLogRecSize(ActivityManager.isLowRamDeviceStatic()
@@ -1365,6 +1370,10 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
         mSupplicantStateTracker.enableVerboseLogging(verbose);
         if (mStaAndAPConcurrency) {
             mSoftApStateMachine.enableVerboseLogging(verbose);
+        }
+        if (mWifiConnectivityManager != null) {
+            Log.d(TAG, "set debug log for WifiConnectivityManager" + debug);
+            mWifiConnectivityManager.enableVerboseLogging(debug);
         }
     }
 

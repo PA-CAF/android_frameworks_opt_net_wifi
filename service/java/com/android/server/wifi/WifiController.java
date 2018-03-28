@@ -378,6 +378,12 @@ public class WifiController extends StateMachine {
         mWifiStateMachine.updateBatteryWorkSource(mTmpWorkSource);
     }
 
+    private void logStateAndMessage(Message message, State state) {
+        if (DBG ) {
+            logd(" " + state.getClass().getSimpleName() + ", message: " + message);
+        }
+    }
+
     public void setSoftApStateMachine(SoftApStateMachine machine, boolean enable) {
         mSoftApStateMachine = machine;
         mStaAndApConcurrency = enable;
@@ -473,6 +479,8 @@ public class WifiController extends StateMachine {
     class DefaultState extends State {
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
+
             switch (msg.what) {
                 case CMD_SCREEN_ON:
                     mAlarmManager.cancel(mIdleIntent);
@@ -577,6 +585,7 @@ public class WifiController extends StateMachine {
         }
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                 case CMD_AIRPLANE_TOGGLED:
@@ -684,6 +693,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch(msg.what) {
                 case CMD_STA_START_FAILURE:
                     log("QcStaEnablingState: CMD_STA_START_FAILURE->mApStaDisabledState");
@@ -740,6 +750,8 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
+
             switch(msg.what) {
                 case CMD_WIFI_STOP_FAILURE:
                 case CMD_WIFI_DISABLED:
@@ -794,6 +806,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch(msg.what) {
                 case CMD_AP_START_FAILURE:
                     log("QcApEnablingState: CMD_AP_START_FAILURE->mApStaDisabledState");
@@ -843,6 +856,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch(msg.what) {
                 case CMD_AP_STOPPED:
                     if (mSettingsStore.isScanAlwaysAvailable()) {
@@ -901,6 +915,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch(msg.what) {
                 case CMD_SET_AP:
                     log("QcApStaEnablingState defer CMD_SET_AP");
@@ -959,6 +974,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch(msg.what) {
                 case CMD_SET_AP:
                     log("QcApStaDisablingState defer CMD_SET_AP");
@@ -1121,6 +1137,7 @@ public class WifiController extends StateMachine {
         }
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                     if (! mSettingsStore.isWifiToggleEnabled()) {
@@ -1224,6 +1241,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch (msg.what) {
                 case CMD_WIFI_TOGGLED:
                     if (mSettingsStore.isWifiToggleEnabled()) {
@@ -1263,12 +1281,12 @@ public class WifiController extends StateMachine {
                     }
                     break;
                 case CMD_SET_AP:
-                    if (mStaAndApConcurrency) {
-                        mSoftApStateMachine.setHostApRunning(((SoftApModeConfiguration) msg.obj), true);
-                        transitionTo(mQcApEnablingState);
-                    } else {
-                        // Before starting tethering, turn off supplicant for scan mode
-                        if (msg.arg1 == 1) {
+                    if (msg.arg1 == 1) {
+                        if (mStaAndApConcurrency) {
+                            /* For STA+SAP concurrency request to start SoftAP is handled in QcApEnablingState. */
+                            transitionTo(mQcApEnablingState);
+                        } else {
+                            // Before starting tethering, turn off supplicant for scan mode
                             mSettingsStore.setWifiSavedState(WifiSettingsStore.WIFI_DISABLED);
                             deferMessage(obtainMessage(msg.what, msg.arg1, 1, msg.obj));
                             transitionTo(mApStaDisabledState);
@@ -1340,6 +1358,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch (msg.what) {
                 case CMD_AIRPLANE_TOGGLED:
                     if (mSettingsStore.isAirplaneModeOn()) {
@@ -1469,6 +1488,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             if (msg.what == CMD_EMERGENCY_CALL_STATE_CHANGED) {
                 if (msg.arg1 == 1) {
                     // nothing to do - just says emergency call started
@@ -1532,6 +1552,7 @@ public class WifiController extends StateMachine {
 
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             if (msg.what == CMD_DEVICE_IDLE) {
                 checkLocksAndTransitionWhenDeviceIdle();
                 // We let default state handle the rest of work
@@ -1559,6 +1580,7 @@ public class WifiController extends StateMachine {
     class DeviceInactiveState extends State {
         @Override
         public boolean processMessage(Message msg) {
+            logStateAndMessage(msg, this);
             switch (msg.what) {
                 case CMD_LOCKS_CHANGED:
                     checkLocksAndTransitionWhenDeviceIdle();
