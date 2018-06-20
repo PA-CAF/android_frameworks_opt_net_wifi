@@ -323,6 +323,7 @@ public class SoftApManager implements ActiveModeManager {
                    && (mSoftApChannel != 0)) {
                 localConfig.apBand = WifiConfiguration.AP_BAND_2GHZ;
                 localConfig.apChannel = mSoftApChannel;
+                config.apChannel = localConfig.apChannel;
             }
             // Note that localConfig.SSID is intended to be either a hex string or "double quoted".
             // However, it seems that whatever is handing us these configurations does not obey
@@ -378,6 +379,7 @@ public class SoftApManager implements ActiveModeManager {
      */
     private void stopSoftAp() {
         try {
+            mApConfig.apChannel = 0;
             mApInterface.stopHostapd(mDualSapMode);
         } catch (RemoteException e) {
             Log.e(TAG, "Exception in stopping soft AP: " + e);
