@@ -19,6 +19,7 @@ package com.android.server.wifi;
 import static com.android.server.wifi.util.ApConfigUtil.ERROR_GENERIC;
 import static com.android.server.wifi.util.ApConfigUtil.ERROR_NO_CHANNEL;
 import static com.android.server.wifi.util.ApConfigUtil.SUCCESS;
+import static android.provider.Settings.Secure.WIFI_SOFTAP_ACS_ENABLED;
 
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
@@ -46,8 +47,8 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.util.Log;
+import android.provider.Settings;
 
-//import android.net.wifi.WifiDevice;
 import java.util.HashMap;
 import java.math.BigInteger;
 
@@ -337,6 +338,15 @@ public class SoftApManager implements ActiveModeManager {
             if (!success) {
                 Log.e(TAG, "Failed to write hostapd configuration");
                 return ERROR_GENERIC;
+            }
+
+            try {
+                /* Enable ACS if supported */
+                if (Settings.Secure.getInt(mContext.getContentResolver(), WIFI_SOFTAP_ACS_ENABLED, 0) > 0) {
+                    mWifiNative.runQsapCmd("softap qccmd set channel=", "0");
+                }
+            } catch (NumberFormatException ex) {
+                Log.e(TAG, "Exception in get softap_acs");
             }
 
             success = mApInterface.startHostapd(false);

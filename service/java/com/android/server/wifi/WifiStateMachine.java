@@ -328,6 +328,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
     private static final int ADD_OR_UPDATE_SOURCE = -3;
 
     private static final int SCAN_REQUEST_BUFFER_MAX_SIZE = 10;
+    private static final int  DATA_STALL_OFFSET_REASON_CODE = 256;
     private static final String CUSTOMIZED_SCAN_SETTING = "customized_scan_settings";
     private static final String CUSTOMIZED_SCAN_WORKSOURCE = "customized_scan_worksource";
     private static final String SCAN_REQUEST_TIME = "scan_request_time";
@@ -4277,8 +4278,17 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
                     if (mWifiDiagnostics != null) {
                         byte[] buffer = (byte[])message.obj;
                         int alertReason = message.arg1;
-                        mWifiDiagnostics.captureAlertData(alertReason, buffer);
-                        mWifiMetrics.incrementAlertReasonCount(alertReason);
+                        if (alertReason < DATA_STALL_OFFSET_REASON_CODE) {
+                            mWifiDiagnostics.captureAlertData(alertReason, buffer);
+                            mWifiMetrics.incrementAlertReasonCount(alertReason);
+                        } else {
+                            int malertReason = alertReason - DATA_STALL_OFFSET_REASON_CODE;
+                            mWifiDiagnostics.captureAlertData(malertReason, buffer);
+                            mWifiMetrics.incrementAlertReasonCount(malertReason);
+                            Intent intent = new Intent(WifiManager.WIFI_DATA_STALL);
+                            intent.putExtra(WifiManager.EXTRA_WIFI_DATA_STALL_REASON, malertReason);
+                            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+                        }
                     }
                     break;
                 case CMD_GET_LINK_LAYER_STATS:

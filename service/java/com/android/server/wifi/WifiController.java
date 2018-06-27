@@ -570,18 +570,10 @@ public class WifiController extends StateMachine {
 
         @Override
         public void enter() {
-            /*
-             * For STA+SAP concurrency request to stop supplicant is
-             * handled in QcStaDisablingState. Hence skip for standalone case.
-             */
-            if (!mStaAndApConcurrency) {
-                mWifiStateMachine.setSupplicantRunning(false);
-                // Supplicant can't restart right away, so not the time we switched off
-                mDisabledTimestamp = SystemClock.elapsedRealtime();
-                mDeferredEnableSerialNumber++;
-                mHaveDeferredEnable = false;
-               mWifiStateMachine.clearANQPCache();
-            }
+            // Supplicant can't restart right away, so not the time we switched off
+            mDisabledTimestamp = SystemClock.elapsedRealtime();
+            mDeferredEnableSerialNumber++;
+            mHaveDeferredEnable = false;
         }
         @Override
         public boolean processMessage(Message msg) {
@@ -688,6 +680,7 @@ public class WifiController extends StateMachine {
             if (DBG) {
                 Slog.d(TAG, "QcStaEnablingState enter");
             }
+            mWifiStateMachine.setOperationalMode(WifiStateMachine.CONNECT_MODE);
             mWifiStateMachine.setSupplicantRunning(true);
         }
 
@@ -1152,11 +1145,7 @@ public class WifiController extends StateMachine {
                         if (mSettingsStore.isScanAlwaysAvailable()) {
                             transitionTo(mStaDisabledWithScanState);
                         } else {
-                            if (mStaAndApConcurrency) {
-                                transitionTo(mQcStaDisablingState);
-                            } else {
-                                transitionTo(mApStaDisabledState);
-                            }
+                            transitionTo(mQcStaDisablingState);
                         }
                     }
                     break;
@@ -1165,11 +1154,7 @@ public class WifiController extends StateMachine {
                     * disable entirely (including scan)
                     */
                     if (!mSettingsStore.isWifiToggleEnabled()) {
-                        if (mStaAndApConcurrency) {
-                            transitionTo(mQcStaDisablingState);
-                        } else {
-                            transitionTo(mApStaDisabledState);
-                        }
+                        transitionTo(mQcStaDisablingState);
                     }
                     break;
                 case CMD_STA_START_FAILURE:
@@ -1198,16 +1183,14 @@ public class WifiController extends StateMachine {
                             // remeber that we were enabled
                             mSettingsStore.setWifiSavedState(WifiSettingsStore.WIFI_ENABLED);
                             deferMessage(obtainMessage(msg.what, msg.arg1, 1, msg.obj));
-                            transitionTo(mApStaDisabledState);
+                            transitionTo(mQcStaDisablingState);
                         }
                     }
                     break;
                 case CMD_RESTART_WIFI:
-                    if (mStaAndApConcurrency) {
-                        log("StaEnabledState:CMD_RESTART_WIFI ->QcStaDisablingState");
-                        deferMessage(obtainMessage(CMD_RESTART_WIFI_CONTINUE));
-                        transitionTo(mQcStaDisablingState);
-                    }
+                    log("StaEnabledState:CMD_RESTART_WIFI ->QcStaDisablingState");
+                    deferMessage(obtainMessage(CMD_RESTART_WIFI_CONTINUE));
+                    transitionTo(mQcStaDisablingState);
                     break;
                 case CMD_RESTART_WIFI_CONTINUE:
                     if (mStaAndApConcurrency && mRestartStaSapStack) {
@@ -1271,21 +1254,13 @@ public class WifiController extends StateMachine {
                 case CMD_AIRPLANE_TOGGLED:
                     if (mSettingsStore.isAirplaneModeOn() &&
                             ! mSettingsStore.isWifiToggleEnabled()) {
-                        if (mStaAndApConcurrency) {
-                            transitionTo(mQcStaDisablingState);
-                        } else {
-                            transitionTo(mApStaDisabledState);
-                        }
+                        transitionTo(mQcStaDisablingState);
                     }
                     break;
                 case CMD_SCAN_ALWAYS_MODE_CHANGED:
                     if (! mSettingsStore.isScanAlwaysAvailable()) {
-                        if (mStaAndApConcurrency) {
-                            mWifiStateMachine.setOperationalMode(WifiStateMachine.CONNECT_MODE);
-                            transitionTo(mQcStaDisablingState);
-                        } else {
-                            transitionTo(mApStaDisabledState);
-                        }
+                        mWifiStateMachine.setOperationalMode(WifiStateMachine.CONNECT_MODE);
+                        transitionTo(mQcStaDisablingState);
                     }
                     break;
                 case CMD_SET_AP:
@@ -1297,7 +1272,7 @@ public class WifiController extends StateMachine {
                             // Before starting tethering, turn off supplicant for scan mode
                             mSettingsStore.setWifiSavedState(WifiSettingsStore.WIFI_DISABLED);
                             deferMessage(obtainMessage(msg.what, msg.arg1, 1, msg.obj));
-                            transitionTo(mApStaDisabledState);
+                            transitionTo(mQcStaDisablingState);
                         }
                     }
                     break;
@@ -1541,9 +1516,8 @@ public class WifiController extends StateMachine {
                 } else if (mSettingsStore.isScanAlwaysAvailable()) {
                     transitionTo(mStaDisabledWithScanState);
                 } else {
-                    // For STA + SAP concurrency, supplicant already stopped
-                    // in EcmState.enter(), hence no need to transition to
-                    // mQcStaDisablingState.
+                    // Since supplicant already stopped (see enter()), move
+                    // directly to ApStaDisabledState.
                     transitionTo(mApStaDisabledState);
                 }
             }
@@ -1576,7 +1550,7 @@ public class WifiController extends StateMachine {
             } else if (msg.what == CMD_RESTART_WIFI) {
                 if (!mStaAndApConcurrency) {
                     deferMessage(obtainMessage(CMD_RESTART_WIFI_CONTINUE));
-                    transitionTo(mApStaDisabledState);
+                    transitionTo(mQcStaDisablingState);
                     return HANDLED;
                 }
             }

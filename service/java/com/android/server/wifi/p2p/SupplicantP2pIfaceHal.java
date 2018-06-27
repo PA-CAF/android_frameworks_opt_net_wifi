@@ -20,7 +20,9 @@ import android.hardware.wifi.supplicant.V1_0.ISupplicant;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantIface;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantNetwork;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantP2pIface;
+import vendor.qti.hardware.wifi.supplicant.V1_1.ISupplicantVendorP2PIface;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantP2pIfaceCallback;
+import vendor.qti.hardware.wifi.supplicant.V1_1.ISupplicantVendorP2PIfaceCallback;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantP2pNetwork;
 import android.hardware.wifi.supplicant.V1_0.IfaceType;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatus;
@@ -77,6 +79,7 @@ public class SupplicantP2pIfaceHal {
     private ISupplicant mISupplicant = null;
     private ISupplicantIface mHidlSupplicantIface = null;
     private ISupplicantP2pIface mISupplicantP2pIface = null;
+    private ISupplicantVendorP2PIface mIVendorSupplicantP2pIface = null;
     private final IServiceNotification mServiceNotificationCallback =
             new IServiceNotification.Stub() {
         public void onRegistration(String fqName, String name, boolean preexisting) {
@@ -276,6 +279,7 @@ public class SupplicantP2pIfaceHal {
                 return false;
             }
             mISupplicantP2pIface = getP2pIfaceMockable(supplicantIface.getResult());
+            mIVendorSupplicantP2pIface = getVendorP2pIfaceMockable(supplicantIface.getResult());
             if (!linkToSupplicantP2pIfaceDeath()) {
                 return false;
             }
@@ -299,6 +303,7 @@ public class SupplicantP2pIfaceHal {
         synchronized (mLock) {
             mISupplicant = null;
             mISupplicantP2pIface = null;
+            mIVendorSupplicantP2pIface = null;
         }
     }
 
@@ -331,6 +336,10 @@ public class SupplicantP2pIfaceHal {
 
     protected ISupplicantP2pIface getP2pIfaceMockable(ISupplicantIface iface) {
         return ISupplicantP2pIface.asInterface(iface.asBinder());
+    }
+
+    protected ISupplicantVendorP2PIface getVendorP2pIfaceMockable(ISupplicantIface iface) {
+        return ISupplicantVendorP2PIface.asInterface(iface.asBinder());
     }
 
     protected ISupplicantP2pNetwork getP2pNetworkMockable(ISupplicantNetwork network) {
@@ -1687,6 +1696,42 @@ public class SupplicantP2pIfaceHal {
                     "setWfdDeviceInfo(" + info + ")");
             try {
                 result.setResult(mISupplicantP2pIface.setWfdDeviceInfo(wfdInfo));
+            } catch (RemoteException e) {
+                Log.e(TAG, "ISupplicantP2pIface exception: " + e);
+                supplicantServiceDiedHandler();
+            }
+
+            return result.isSuccess();
+        }
+    }
+
+    /**
+     * Set Wifi Display R2 device info.
+     *
+     * @param info WFD device info as described in section 5.1.12 of
+     *        WFD technical specification v2.0.0.
+     * @return true, if operation was successful.
+     */
+    public boolean setWfdR2DeviceInfo(String info) {
+        synchronized (mLock) {
+            if (!checkSupplicantP2pIfaceAndLogFailure("setWfdR2DeviceInfo")) return false;
+
+            if (info == null) {
+                Log.e(TAG, "Cannot parse null WFD info string.");
+                return false;
+            }
+            byte[] wfdInfo = null;
+            try {
+                wfdInfo = NativeUtil.hexStringToByteArray(info);
+            } catch (Exception e) {
+                Log.e(TAG, "Could not parse WFD Device Info string.");
+                return false;
+            }
+
+            SupplicantResult<Void> result = new SupplicantResult(
+                    "setWfdDeviceInfo(" + info + ")");
+            try {
+                result.setResult( mIVendorSupplicantP2pIface.setWfdR2DeviceInfo(wfdInfo));
             } catch (RemoteException e) {
                 Log.e(TAG, "ISupplicantP2pIface exception: " + e);
                 supplicantServiceDiedHandler();

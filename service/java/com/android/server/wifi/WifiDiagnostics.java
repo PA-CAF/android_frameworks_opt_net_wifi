@@ -506,6 +506,7 @@ class WifiDiagnostics extends BaseWifiDiagnostics {
 
     private BugReport captureBugreport(int errorCode, boolean captureFWDump) {
         BugReport report = new BugReport();
+        mLog.warn("CaptureBugReport %").c(errorCode).flush();
         report.errorCode = errorCode;
         report.systemTimeMs = System.currentTimeMillis();
         report.kernelTimeNanos = System.nanoTime();
