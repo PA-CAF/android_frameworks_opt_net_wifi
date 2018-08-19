@@ -31,6 +31,7 @@
 #include <private/android_filesystem_config.h>
 
 #include "wifi_system/supplicant_manager.h"
+#include "wifi_fst.h"
 
 using android::base::ParseInt;
 using android::base::ReadFileToString;
@@ -47,8 +48,9 @@ namespace {
 
 const int kDefaultApChannel = 6;
 const char kHostapdServiceName[] = "hostapd";
+const char kHostapdDualServiceName[] = "hostapd_dual";
+const char kHostapdFSTServiceName[] = "hostapd_fst";
 const char kHostapdConfigFilePath[] = "/data/misc/wifi/hostapd.conf";
-
 
 string GeneratePsk(const vector<uint8_t>& ssid,
                    const vector<uint8_t>& passphrase) {
@@ -77,13 +79,28 @@ string GeneratePsk(const vector<uint8_t>& ssid,
 
 }  // namespace
 
-bool HostapdManager::StartHostapd() {
+bool HostapdManager::StartHostapd(bool dual_mode) {
   if (!SupplicantManager::EnsureEntropyFileExists()) {
     LOG(WARNING) << "Wi-Fi entropy file was not created";
   }
 
-  if (property_set("ctl.start", kHostapdServiceName) != 0) {
+  if (wifi_start_fstman(1)) {
+    return false;
+  }
+
+  if (dual_mode &&
+      property_set("ctl.start",
+                   is_fst_softap_enabled() ?
+                     kHostapdFSTServiceName : kHostapdDualServiceName) != 0) {
+    LOG(ERROR) << "Failed to start Dual SoftAP";
+    wifi_stop_fstman(1);
+    return false;
+  } else if (!dual_mode &&
+             property_set("ctl.start",
+                          is_fst_softap_enabled() ?
+                            kHostapdFSTServiceName : kHostapdServiceName) != 0) {
     LOG(ERROR) << "Failed to start SoftAP";
+    wifi_stop_fstman(1);
     return false;
   }
 
@@ -91,14 +108,26 @@ bool HostapdManager::StartHostapd() {
   return true;
 }
 
-bool HostapdManager::StopHostapd() {
+bool HostapdManager::StopHostapd(bool dual_mode) {
   LOG(DEBUG) << "Stopping the SoftAP service...";
 
-  if (property_set("ctl.stop", kHostapdServiceName) < 0) {
+  if (dual_mode &&
+      property_set("ctl.stop",
+                   is_fst_softap_enabled() ?
+                     kHostapdFSTServiceName : kHostapdDualServiceName) < 0) {
+    LOG(ERROR) << "Failed to stop hostapd_dual service!";
+    wifi_stop_fstman(1);
+    return false;
+  } else if (!dual_mode &&
+             property_set("ctl.stop",
+                          is_fst_softap_enabled() ?
+                            kHostapdFSTServiceName : kHostapdServiceName) < 0) {
     LOG(ERROR) << "Failed to stop hostapd service!";
+    wifi_stop_fstman(1);
     return false;
   }
 
+  wifi_stop_fstman(1);
   LOG(DEBUG) << "SoftAP stopped successfully";
   return true;
 }
@@ -188,7 +217,8 @@ string HostapdManager::CreateHostapdConfig(
       "hw_mode=%c\n"
       "ignore_broadcast_ssid=%d\n"
       "wowlan_triggers=any\n"
-      "%s",
+      "%s"
+      "oce=2\n",
       interface_name.c_str(),
       ssid_as_string.c_str(),
       channel,

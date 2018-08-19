@@ -28,6 +28,8 @@
 #define _REALLY_INCLUDE_SYS__SYSTEM_PROPERTIES_H_
 #include <sys/_system_properties.h>
 
+#include "wifi_fst.h"
+
 namespace android {
 namespace wifi_system {
 namespace {
@@ -46,7 +48,9 @@ const unsigned char kDummyKey[21] = {0x02, 0x11, 0xbe, 0x33, 0x43, 0x35, 0x68,
                                      0x47, 0x84, 0x99, 0xa9, 0x2b, 0x1c, 0xd3,
                                      0xee, 0xff, 0xf1, 0xe2, 0xf3, 0xf4, 0xf5};
 
-int ensure_config_file_exists(const char* config_file) {
+}  // namespace
+
+int ensure_config_file_exists(const char* config_file, const char *config_file_template) {
   char buf[2048];
   int srcfd, destfd;
   int nread;
@@ -68,9 +72,9 @@ int ensure_config_file_exists(const char* config_file) {
   }
 
   std::string configPathSystem =
-      std::string("/system") + std::string(kSupplicantConfigTemplatePath);
+      std::string("/system") + std::string(config_file_template);
   std::string configPathVendor =
-      std::string("/vendor") + std::string(kSupplicantConfigTemplatePath);
+      std::string("/vendor") + std::string(config_file_template);
   srcfd = TEMP_FAILURE_RETRY(open(configPathSystem.c_str(), O_RDONLY));
   templatePath = configPathSystem;
   if (srcfd < 0) {
@@ -123,13 +127,15 @@ int ensure_config_file_exists(const char* config_file) {
   return true;
 }
 
-}  // namespace
-
 bool SupplicantManager::StartSupplicant() {
   char supp_status[PROPERTY_VALUE_MAX] = {'\0'};
   int count = 200; /* wait at most 20 seconds for completion */
   const prop_info* pi;
   unsigned serial = 0;
+
+  if (wifi_start_fstman(0)) {
+    return -1;
+  }
 
   /* Check whether already running */
   if (property_get(kSupplicantInitProperty, supp_status, NULL) &&
@@ -138,8 +144,9 @@ bool SupplicantManager::StartSupplicant() {
   }
 
   /* Before starting the daemon, make sure its config file exists */
-  if (ensure_config_file_exists(kSupplicantConfigFile) < 0) {
+  if (ensure_config_file_exists(kSupplicantConfigFile, kSupplicantConfigTemplatePath) < 0) {
     LOG(ERROR) << "Wi-Fi will not be enabled";
+    wifi_stop_fstman(0);
     return false;
   }
 
@@ -150,7 +157,7 @@ bool SupplicantManager::StartSupplicant() {
    * supplicant will refuse to start and emit a good error message.
    * No need to check for it here.
    */
-  (void)ensure_config_file_exists(kP2pConfigFile);
+  (void)ensure_config_file_exists(kP2pConfigFile, kSupplicantConfigTemplatePath);
 
   if (!EnsureEntropyFileExists()) {
     LOG(ERROR) << "Wi-Fi entropy file was not created";
@@ -185,12 +192,14 @@ bool SupplicantManager::StartSupplicant() {
         if (strcmp(supp_status, "running") == 0) {
           return true;
         } else if (strcmp(supp_status, "stopped") == 0) {
+          wifi_stop_fstman(0);
           return false;
         }
       }
     }
     usleep(100000);
   }
+  wifi_stop_fstman(0);
   return false;
 }
 
@@ -201,6 +210,7 @@ bool SupplicantManager::StopSupplicant() {
   /* Check whether supplicant already stopped */
   if (property_get(kSupplicantInitProperty, supp_status, NULL) &&
       strcmp(supp_status, "stopped") == 0) {
+    wifi_stop_fstman(0);
     return true;
   }
 
@@ -209,11 +219,15 @@ bool SupplicantManager::StopSupplicant() {
 
   while (count-- > 0) {
     if (property_get(kSupplicantInitProperty, supp_status, NULL)) {
-      if (strcmp(supp_status, "stopped") == 0) return true;
+      if (strcmp(supp_status, "stopped") == 0) {
+        wifi_stop_fstman(0);
+        return true;
+      }
     }
     usleep(100000);
   }
   LOG(ERROR) << "Failed to stop supplicant";
+  wifi_stop_fstman(0);
   return false;
 }
 

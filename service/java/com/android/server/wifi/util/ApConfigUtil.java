@@ -19,7 +19,7 @@ package com.android.server.wifi.util;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiScanner;
 import android.util.Log;
-
+import android.text.TextUtils;
 import com.android.server.wifi.WifiNative;
 
 import java.util.ArrayList;
@@ -147,4 +147,20 @@ public class ApConfigUtil {
 
         return SUCCESS;
     }
+
+    /**
+     * Remove quotes from WifiConfiguration fields
+     */
+    public static String removeDoubleQuotes(String string) {
+        if (TextUtils.isEmpty(string)) {
+            return "";
+        }
+        int length = string.length();
+        if ((length > 1) && (string.charAt(0) == '"')
+                 && (string.charAt(length - 1) == '"')) {
+            return string.substring(1, length - 1);
+        }
+        return string;
+    }
+
 }

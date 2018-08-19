@@ -21,6 +21,7 @@ import android.content.Context;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiConfiguration.KeyMgmt;
 import android.os.Environment;
+import android.os.SystemProperties;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -39,6 +40,9 @@ import java.util.ArrayList;
 import java.util.Random;
 import java.util.UUID;
 
+import java.io.BufferedReader;
+import java.io.EOFException;
+import java.io.FileReader;
 /**
  * Provides API for reading/writing soft access point configuration.
  */
@@ -70,6 +74,23 @@ public class WifiApConfigStore {
     private final Context mContext;
     private final String mApConfigFile;
     private final BackupManagerProxy mBackupManagerProxy;
+
+    // STA + SAP and Dual SAP configs
+    private boolean mSoftApCreateIntf = false;
+    private int mSoftApChannel = 0;
+    private static final String SEPARATOR_KEY = "\n";
+    private static final String ENABLE_STA_SAP
+            = "ENABLE_STA_SAP_CONCURRENCY:";
+    private static final String SAP_CHANNEL
+            = "SAP_CHANNEL:";
+    private static final String mConcurrencyCfgTemplateFile =
+            "/vendor/etc/wifi/wifi_concurrency_cfg.txt";
+    private String mBridgeInterfaceName = null;
+    private String mSoftApInterfaceName = null;
+    private boolean mStaSapConcurrentMode = false;
+    private boolean mDualSapBuildEnabled = false;
+    private boolean mDualSapStatus = false;
+    private String[] mdualApInterfaces = null;
 
     WifiApConfigStore(Context context, BackupManagerProxy backupManagerProxy) {
         this(context, backupManagerProxy, DEFAULT_AP_CONFIG_FILE);
@@ -104,6 +125,73 @@ public class WifiApConfigStore {
             /* Save the default configuration to persistent storage. */
             writeApConfiguration(mApConfigFile, mWifiApConfig);
         }
+
+        /* Get softAp Interface name from overlay config.xml */
+        String[] softApInterfaces = mContext.getResources().getStringArray(
+                com.android.internal.R.array.config_tether_wifi_regexs);
+        for (String intf : softApInterfaces) {
+            if (intf.equals("wlan0")) {
+                mSoftApInterfaceName = intf;
+            } else if (intf.equals("softap0")) {
+                mSoftApInterfaceName = intf;
+                mSoftApCreateIntf = true;
+            } else if (intf.equals("wifi_br0")) {
+                mBridgeInterfaceName = intf;
+            }
+        }
+        /* save the softAP interface for FST */
+        if (mSoftApInterfaceName != null) {
+            SystemProperties.set("persist.vendor.fst.wifi.sap.interface", mSoftApInterfaceName);
+        }
+
+        if (ensureConcurrencyFileExist())
+            readConcurrencyConfig();
+
+        mDualSapBuildEnabled = mContext.getResources().getBoolean(
+            com.android.internal.R.bool.config_wifi_dual_sap_mode_enabled);
+
+        /* Get dual softAp Interface name from overlay config.xml */
+        mdualApInterfaces = mContext.getResources().getStringArray(
+            com.android.internal.R.array.config_wifi_dual_sap_interfaces);
+
+    }
+
+   /* Additional APIs(get/set) to support STA + SAP and SAP + SAP Feature */
+
+    public synchronized boolean getStaSapConcurrency() {
+        return mStaSapConcurrentMode;
+    }
+
+    public synchronized String getSapInterface() {
+        return mSoftApInterfaceName;
+    }
+
+    public synchronized String getBridgeInterface() {
+        return mBridgeInterfaceName;
+    }
+
+    public synchronized int getConfigFileChannel() {
+        return mSoftApChannel;
+    }
+
+    public synchronized boolean isSapNewIntfRequired() {
+        return mSoftApCreateIntf;
+    }
+
+    public synchronized boolean isDualSapSupported() {
+        return mDualSapBuildEnabled;
+    }
+
+    public synchronized String[] getDualSapInterfaces() {
+        return mdualApInterfaces;
+    }
+
+    public synchronized boolean getDualSapStatus() {
+        return mDualSapStatus;
+    }
+
+    public synchronized void setDualSapStatus(boolean enable) {
+        mDualSapStatus = enable;
     }
 
     /**
@@ -343,4 +431,85 @@ public class WifiApConfigStore {
 
         return true;
     }
+
+    private void readConcurrencyConfig() {
+        BufferedReader reader = null;
+        try {
+            if (mConcurrencyCfgTemplateFile != null) {
+                Log.d(TAG, "mConcurrencyCfgTemplateFile : "
+                      + mConcurrencyCfgTemplateFile);
+            }
+            reader = new BufferedReader(new FileReader(mConcurrencyCfgTemplateFile));
+            for (String key = reader.readLine(); key != null;
+            key = reader.readLine()) {
+                if (key != null) {
+                    Log.d(TAG, "mConcurrencyCfgTemplateFile line: " + key);
+                }
+                if (key.startsWith(ENABLE_STA_SAP)) {
+                    String st = key.replace(ENABLE_STA_SAP, "");
+                    st = st.replace(SEPARATOR_KEY, "");
+                    try {
+                        mStaSapConcurrentMode = (Integer.parseInt(st) == 1);
+                        Log.d(TAG,"mConcurrencyCfgTemplateFile EnableConcurrency = "
+                              + mStaSapConcurrentMode);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG,"mConcurrencyCfgTemplateFile: incorrect format :"
+                              + key);
+                    }
+                }
+                if (key.startsWith(SAP_CHANNEL)) {
+                    String st = key.replace(SAP_CHANNEL, "");
+                    st = st.replace(SEPARATOR_KEY, "");
+                    try {
+                        mSoftApChannel = Integer.parseInt(st);
+                        Log.d(TAG,"mConcurrencyCfgTemplateFile SAPChannel = "
+                              + mSoftApChannel);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG,"mConcurrencyCfgTemplateFile: incorrect format :"
+                              + key);
+                    }
+                }
+            }
+        } catch (EOFException ignore) {
+            if (reader != null) {
+                try {
+                    reader.close();
+                    reader = null;
+                } catch (Exception e) {
+                    Log.e(TAG, "mConcurrencyCfgTemplateFile: Error closing file" + e);
+                }
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "mConcurrencyCfgTemplateFile: Error parsing configuration" + e);
+        }
+        if (reader != null) {
+          try {
+              reader.close();
+          } catch (Exception e) {
+              Log.e(TAG, "mConcurrencyCfgTemplateFile: Error closing file" + e);
+          }
+        }
+    }
+
+    private boolean ensureConcurrencyFileExist() {
+        FileOutputStream dstStream = null;
+        FileInputStream srcStream = null;
+        DataInputStream in = null;
+        // check ConcurrencyCfgTemplateFile  exist
+        try {
+            in = new DataInputStream(new BufferedInputStream(new FileInputStream(
+                            mConcurrencyCfgTemplateFile)));
+        } catch (Exception e) {
+            Log.e(TAG, "ensureConcurrencyFile template file doesnt exist" + e);
+            return false;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException e) {}
+            }
+        }
+        return true;
+    }
+
 }

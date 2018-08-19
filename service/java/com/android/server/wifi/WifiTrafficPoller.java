@@ -69,7 +69,7 @@ public class WifiTrafficPoller {
     private AtomicBoolean mScreenOn = new AtomicBoolean(true);
     private final TrafficHandler mTrafficHandler;
     private NetworkInfo mNetworkInfo;
-    private final String mInterface;
+    private String mInterface;
 
     private boolean mVerboseLoggingEnabled = false;
 
@@ -105,6 +105,16 @@ public class WifiTrafficPoller {
 
     void addClient(Messenger client) {
         Message.obtain(mTrafficHandler, ADD_CLIENT, client).sendToTarget();
+    }
+
+    void setInterface(String iface) {
+        if (DBG) {
+            Log.e(TAG, "setInterface: " + iface);
+        }
+        mTxPkts = mRxPkts = 0;
+        mDataActivity = 0;
+        mNetworkInfo = null;
+        mInterface = iface;
     }
 
     void removeClient(Messenger client) {

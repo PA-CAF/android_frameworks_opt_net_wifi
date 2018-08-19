@@ -38,11 +38,11 @@ class HostapdManager {
 
   // Request that hostapd be started.
   // Returns true on success.
-  virtual bool StartHostapd();
+  virtual bool StartHostapd(bool dual_mode);
 
   // Request that a running instance of hostapd be stopped.
   // Returns true on success.
-  virtual bool StopHostapd();
+  virtual bool StopHostapd(bool dual_mode);
 
   // Create a string suitable for writing to the hostapd configuration file.
   // |interface_name| is a network interface name (e.g. "wlan0").

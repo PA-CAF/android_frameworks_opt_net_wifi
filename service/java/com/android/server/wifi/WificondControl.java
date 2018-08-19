@@ -28,6 +28,7 @@ import android.net.wifi.WifiSsid;
 import android.os.Binder;
 import android.os.RemoteException;
 import android.util.Log;
+import java.nio.charset.StandardCharsets;
 
 import com.android.server.wifi.hotspot2.NetworkDetail;
 import com.android.server.wifi.util.InformationElementUtil;
@@ -71,6 +72,7 @@ public class WificondControl {
     private IPnoScanEvent mPnoScanEventHandler;
 
     private String mClientInterfaceName;
+    private static final int MAX_SSID_LEN = 32;
 
 
     private class ScanEventHandler extends IScanEvent.Stub {
@@ -210,6 +212,62 @@ public class WificondControl {
     }
 
     /**
+    * Setup driver for softAp mode via wificond.
+    * @return An IApInterface as wificond Ap interface binder handler.
+    * Returns null on failure.
+    */
+    public IApInterface QcSetupDriverForSoftApMode(boolean isDualMode) {
+        String sapInterfaceName = null;
+
+        if (isDualMode)
+            sapInterfaceName = mWifiInjector.getWifiApConfigStore().getBridgeInterface();
+        else
+            sapInterfaceName = mWifiInjector.getWifiApConfigStore().getSapInterface();
+
+        if (sapInterfaceName == null) {
+            Log.d(TAG, "Can't setup SAP mode without interface names");
+            return null;
+        }
+
+        Log.d(TAG, "Setting up driver for soft ap mode");
+        mWificond = mWifiInjector.makeWificond();
+        if (mWificond == null) {
+            Log.e(TAG, "Failed to get reference to wificond");
+            return null;
+        }
+
+        String[] dualSapIfname = null;
+        if (isDualMode)
+            dualSapIfname = mWifiInjector.getWifiApConfigStore().getDualSapInterfaces();
+
+        IApInterface softApInterface = null;
+        IApInterface dualSapInterface1 = null;
+        IApInterface dualSapInterface2 = null;
+
+        try {
+            if (isDualMode && dualSapIfname != null && dualSapIfname.length == 2) {
+                dualSapInterface1 = mWificond.QcCreateApInterface(dualSapIfname[0].getBytes(StandardCharsets.UTF_8));
+                dualSapInterface2 = mWificond.QcCreateApInterface(dualSapIfname[1].getBytes(StandardCharsets.UTF_8));
+            }
+            softApInterface = mWificond.QcCreateApInterface(sapInterfaceName.getBytes(StandardCharsets.UTF_8));
+        } catch (RemoteException e1) {
+            Log.e(TAG, "Failed to get IApInterface due to remote exception");
+            return null;
+        }
+
+        if (softApInterface == null || (dualSapIfname != null && (dualSapInterface1 == null || dualSapInterface2 == null))) {
+            Log.e(TAG, "Could not get IApInterface instance from wificond");
+            return null;
+        }
+        Binder.allowBlocking(softApInterface.asBinder());
+
+        // Refresh Handlers
+        mApInterface = softApInterface;
+
+        return softApInterface;
+    }
+
+    /**
     * Teardown all interfaces configured in wificond.
     * @return Returns true on success.
     */
@@ -240,6 +298,77 @@ public class WificondControl {
             return true;
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to tear down interfaces due to remote exception");
+        }
+
+        return false;
+    }
+
+    /**
+     * Teardown STA interfaces configured in wificond.
+     * @return Returns true on success.
+     */
+    public boolean tearDownStaInterfaces() {
+        Log.d(TAG, "tearing down STA interfaces in wificond");
+        mWificond = mWifiInjector.makeWificond();
+        if (mWificond == null) {
+            Log.e(TAG, "Failed to get reference to wificond");
+            return false;
+        }
+
+        try {
+            mWificond.tearDownStaInterfaces();
+            mClientInterface = null;
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to tear down STA interfaces due to remote exception");
+        }
+
+        return false;
+    }
+
+    /**
+     * Teardown AP interfaces configured in wificond.
+     * @return Returns true on success.
+     */
+    public boolean tearDownApInterfaces() {
+        Log.d(TAG, "tearing down AP interfaces in wificond");
+        mWificond = mWifiInjector.makeWificond();
+        if (mWificond == null) {
+            Log.e(TAG, "Failed to get reference to wificond");
+            return false;
+        }
+
+        try {
+            mWificond.tearDownApInterfaces();
+            mApInterface = null;
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to tear down STA interfaces due to remote exception");
+        }
+
+        return false;
+    }
+
+    /**
+     * Run Qsap command through wificond.
+     * @return Returns true on success.
+     */
+    public boolean runQsapCmd(String cmd) {
+        Log.d(TAG, "sending qsap cmd = " + cmd);
+        mWificond = mWifiInjector.makeWificond();
+        if (mWificond == null) {
+            Log.e(TAG, "Failed to get reference to wificond");
+            return false;
+        }
+
+        try {
+            if (!mWificond.setHostapdParam(cmd.getBytes(StandardCharsets.UTF_8))) {
+                Log.e(TAG, "Failed to run qsap command");
+                return false;
+            }
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to run qsap command due to remote exception");
         }
 
         return false;
@@ -406,6 +535,27 @@ public class WificondControl {
         return results;
     }
 
+    // wifigbk +++
+    public ArrayList<Byte> getWifiGbkHistory(ArrayList<Byte> ssid) {
+        if (mWificondScanner == null) {
+            Log.e(TAG, "No valid wificond scanner interface handler");
+            return ssid;
+        }
+        try {
+            byte[] ssid_array = NativeUtil.byteArrayFromArrayList(ssid);
+            byte[] out_ssid_array = mWificondScanner.getWifiGbkHistory(ssid_array);
+            if (out_ssid_array != null && out_ssid_array.length  > 0) {
+                ssid = NativeUtil.byteArrayToArrayList(out_ssid_array);
+                Log.d(TAG, "getWifiGbkHistory success - ssid= " + NativeUtil.hexStringFromByteArray(ssid_array) +
+                           " out_ssid=" + NativeUtil.hexStringFromByteArray(out_ssid_array));
+            }
+        } catch (RemoteException e1) {
+            Log.e(TAG, "Failed to getWifiGbkHistory! (due to RemoteException)");
+        }
+        return ssid;
+    }
+    // wifigbk ---
+
     /**
      * Start a scan using wificond for the given parameters.
      * @param freqs list of frequencies to scan for, if null scan all supported channels.
@@ -432,9 +582,35 @@ public class WificondControl {
             for (String ssid : hiddenNetworkSSIDs) {
                 HiddenNetwork network = new HiddenNetwork();
                 try {
-                    network.ssid = NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(ssid));
+                    ArrayList<Byte> ssid_l = NativeUtil.decodeSsid(ssid);
+
+                    // wifigbk++
+                    if (!NativeUtil.isAllAscii(ssid_l)) {
+                        // WORKAROUND: Try add extra GBK SSID
+                        byte[] ssid2 = NativeUtil.getSsidBytes(ssid, "GBK");
+                        if (ssid2 != null && ssid2.length > 0) {
+                            HiddenNetwork network2 = new HiddenNetwork();
+                            network2.ssid = ssid2;
+                            String hexS = NativeUtil.hexStringFromByteArray(
+                                network2.ssid);
+                            Log.i(TAG, "scan - extra Gbk hidden_ssid=" + hexS);
+                            if (network2.ssid.length > MAX_SSID_LEN) {
+                                Log.e(TAG, "scan - skip long ssid = " + hexS);
+                            } else {
+                                settings.hiddenNetworks.add(network2);
+                            }
+                        }
+                    }
+                    // wifigbk--
+
+                    network.ssid = NativeUtil.byteArrayFromArrayList(ssid_l);
                 } catch (IllegalArgumentException e) {
                     Log.e(TAG, "Illegal argument " + ssid, e);
+                    continue;
+                }
+                if (network.ssid.length > MAX_SSID_LEN) {
+                    Log.e(TAG, "SSID is too long after conversion, skipping this ssid! SSID = " +
+                                network.ssid + " , network.ssid.size = " + network.ssid.length);
                     continue;
                 }
                 settings.hiddenNetworks.add(network);
@@ -470,10 +646,31 @@ public class WificondControl {
                 condNetwork.isHidden = (network.flags
                         & WifiScanner.PnoSettings.PnoNetwork.FLAG_DIRECTED_SCAN) != 0;
                 try {
+                    ArrayList<Byte> ssid_l = NativeUtil.decodeSsid(network.ssid);
+
+                    // wifigbk++
+                    if (!NativeUtil.isAllAscii(ssid_l)) {
+                        // Get ssid from history.
+                        ArrayList<Byte> out_ssid_l =
+                                this.getWifiGbkHistory(ssid_l);
+                        if (out_ssid_l != null && !out_ssid_l.equals(ssid_l)) {
+                            ssid_l = out_ssid_l;
+                            Log.i(TAG, "startPnoScan - Gbk hidden_ssid="
+                                + NativeUtil.hexStringFromByteArray(
+                                  NativeUtil.byteArrayFromArrayList(ssid_l)));
+                        }
+                    }
+                    // wifigbk--
+
                     condNetwork.ssid =
-                            NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(network.ssid));
+                            NativeUtil.byteArrayFromArrayList(ssid_l);
                 } catch (IllegalArgumentException e) {
                     Log.e(TAG, "Illegal argument " + network.ssid, e);
+                    continue;
+                }
+                if (condNetwork.ssid.length > MAX_SSID_LEN) {
+                    Log.e(TAG, "startPnoScan - drop too long ssid="
+                        + NativeUtil.hexStringFromByteArray(condNetwork.ssid));
                     continue;
                 }
                 settings.pnoNetworks.add(condNetwork);

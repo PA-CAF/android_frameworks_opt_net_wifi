@@ -303,10 +303,12 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                                 WifiManager.EXTRA_SCAN_AVAILABLE, WifiManager.WIFI_STATE_DISABLED);
                         if (DBG) localLog("SCAN_AVAILABLE : " + state);
                         if (state == WifiManager.WIFI_STATE_ENABLED) {
+                            initializeScanner();
                             mBackgroundScanStateMachine.sendMessage(CMD_DRIVER_LOADED);
                             mSingleScanStateMachine.sendMessage(CMD_DRIVER_LOADED);
                             mPnoScanStateMachine.sendMessage(CMD_DRIVER_LOADED);
                         } else if (state == WifiManager.WIFI_STATE_DISABLED) {
+                            cleanupScanner();
                             mBackgroundScanStateMachine.sendMessage(CMD_DRIVER_UNLOADED);
                             mSingleScanStateMachine.sendMessage(CMD_DRIVER_UNLOADED);
                             mPnoScanStateMachine.sendMessage(CMD_DRIVER_UNLOADED);
@@ -326,6 +328,25 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
     @VisibleForTesting
     public void setWifiHandlerLogForTest(WifiLog log) {
         mClientHandler.setWifiLog(log);
+    }
+
+    /**
+     * Method to initialize scannerImpl (if not initialized already)
+     */
+    private void initializeScanner() {
+        if (mScannerImpl == null) {
+            mScannerImpl = mScannerImplFactory.create(mContext, mLooper, mClock);
+            mChannelHelper = mScannerImpl.getChannelHelper();
+        }
+    }
+
+    /**
+     * Provides method for cleaning ScannerImpl object
+     */
+    private void cleanupScanner() {
+        if (mScannerImpl != null) {
+            mScannerImpl.cleanup();
+        }
     }
 
     private static boolean isWorkSourceValid(WorkSource workSource) {
@@ -998,14 +1019,6 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
             public boolean processMessage(Message msg) {
                 switch (msg.what) {
                     case CMD_DRIVER_LOADED:
-                        // TODO this should be moved to a common location since it is used outside
-                        // of this state machine. It is ok right now because the driver loaded event
-                        // is sent to this state machine first.
-                        if (mScannerImpl == null) {
-                            mScannerImpl = mScannerImplFactory.create(mContext, mLooper, mClock);
-                            mChannelHelper = mScannerImpl.getChannelHelper();
-                        }
-
                         mBackgroundScheduler = new BackgroundScanScheduler(mChannelHelper);
 
                         WifiNative.ScanCapabilities capabilities =
@@ -1066,7 +1079,6 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
             public void exit() {
                 sendBackgroundScanFailedToAllAndClear(
                         WifiScanner.REASON_UNSPECIFIED, "Scan was interrupted");
-                mScannerImpl.cleanup();
             }
 
             @Override
@@ -1130,6 +1142,8 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
         class PausedState extends State {
             @Override
             public void enter() {
+                // To handle transition from StartedState to PausedState
+                cleanupScanner();
                 if (DBG) localLog("PausedState");
             }
 

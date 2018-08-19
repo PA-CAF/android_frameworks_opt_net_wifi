@@ -60,7 +60,7 @@ import java.util.Set;
  */
 public class HalDeviceManager {
     private static final String TAG = "HalDeviceManager";
-    private static final boolean DBG = false;
+    private boolean DBG = false;
 
     private static final int START_HAL_RETRY_INTERVAL_MS = 20;
     // Number of attempts a start() is re-tried. A value of 0 means no retries after a single
@@ -1963,5 +1963,13 @@ public class HalDeviceManager {
         pw.println("  mInterfaceAvailableForRequestListeners: "
                 + mInterfaceAvailableForRequestListeners);
         pw.println("  mInterfaceInfoCache: " + mInterfaceInfoCache);
+    }
+
+    void enableVerboseLogging(int verbose) {
+        if (verbose > 0) {
+            DBG = true;
+        } else {
+            DBG = false;
+        }
     }
 }

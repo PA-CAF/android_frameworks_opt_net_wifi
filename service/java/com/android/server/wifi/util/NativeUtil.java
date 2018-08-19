@@ -22,6 +22,7 @@ import com.android.server.wifi.ByteBufferReader;
 
 import libcore.util.HexEncoding;
 
+import java.io.UnsupportedEncodingException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -29,13 +30,18 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
+import java.nio.charset.UnsupportedCharsetException;
 import java.util.ArrayList;
 import java.util.Arrays;
+
+import android.util.Log;
 
 /**
  * Provide utility functions for native interfacing modules.
  */
 public class NativeUtil {
+    private static final String TAG = "NativeUtil";
     private static final String ANY_MAC_STR = "any";
     public static final byte[] ANY_MAC_BYTES = {0, 0, 0, 0, 0, 0};
     private static final int MAC_LENGTH = 6;
@@ -251,6 +257,7 @@ public class NativeUtil {
                 CharBuffer decoded = decoder.decode(ByteBuffer.wrap(byteArray));
                 return "\"" + decoded.toString() + "\"";
             } catch (CharacterCodingException cce) {
+                Log.e(TAG, "Cannot decode ssid! CharacterCodingException cce =  " + cce);
             }
         }
         return hexStringFromByteArray(byteArray);
@@ -282,6 +289,68 @@ public class NativeUtil {
     public static String encodeSsid(ArrayList<Byte> ssidBytes) {
         return bytesToHexOrQuotedString(ssidBytes);
     }
+
+    // wifigbk++
+    public static boolean isAllAscii(ArrayList<Byte> ssidBytes) {
+        if (ssidBytes == null) {
+            return false;
+        }
+
+        int size = ssidBytes.size();
+        for (int i = 0; i < size; i ++) {
+            byte val = ssidBytes.get(i);
+            if (val < 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static byte[] getSsidBytes(String ssid, String charsetName) {
+        if (ssid == null) {
+            return null;
+        }
+
+        String bare_ssid = removeEnclosingQuotes(ssid);
+        byte ssidBytes[] = null;
+        try {
+            ssidBytes = bare_ssid.getBytes(charsetName);
+        } catch (UnsupportedEncodingException cce) {
+            // Unsupported
+        }
+
+        return ssidBytes;
+    }
+
+    public static String encodeSsidByCharset(byte[] ssidBytes, String name) {
+        String ssid = null;
+
+        try {
+            Charset charset = Charset.forName(name);
+            CharsetDecoder decoder = charset.newDecoder();
+            CharBuffer decoded = decoder.decode(ByteBuffer.wrap(ssidBytes));
+            ssid = "\"" + decoded.toString() + "\"";
+        } catch (UnsupportedCharsetException cce) {
+        } catch (CharacterCodingException cce) {
+        }
+
+        return ssid;
+    }
+
+    public static boolean isUtf(byte[] ssidBytes) {
+        if (ssidBytes == null || ssidBytes.length == 0) {
+            return true;  // take null and empty as Utf
+        }
+
+        String ssid = encodeSsidByCharset(ssidBytes, "UTF-8");
+        if (ssid != null) {
+            return true;
+        }
+
+        return false;
+    }
+    // wifigbk--
 
     /**
      * Convert from an array of primitive bytes to an array list of Byte.

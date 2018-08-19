@@ -17,6 +17,7 @@ package com.android.server.wifi;
 
 import android.content.Context;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetwork;
+import vendor.qti.hardware.wifi.supplicant.V1_0.ISupplicantVendorStaNetwork;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetworkCallback;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatus;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatusCode;
@@ -90,6 +91,7 @@ public class SupplicantStaNetworkHal {
     private final String mIfaceName;
     private final WifiMonitor mWifiMonitor;
     private ISupplicantStaNetwork mISupplicantStaNetwork;
+    private ISupplicantVendorStaNetwork mISupplicantVendorStaNetwork;
     private ISupplicantStaNetworkCallback mISupplicantStaNetworkCallback;
 
     private boolean mVerboseLoggingEnabled = false;
@@ -127,9 +129,12 @@ public class SupplicantStaNetworkHal {
     private String mEapEngineID;
     private String mEapDomainSuffixMatch;
 
-    SupplicantStaNetworkHal(ISupplicantStaNetwork iSupplicantStaNetwork, String ifaceName,
+    SupplicantStaNetworkHal(ISupplicantStaNetwork iSupplicantStaNetwork,
+                            ISupplicantVendorStaNetwork iSupplicantVendorStaNetwork,
+                            String ifaceName,
                             Context context, WifiMonitor monitor) {
         mISupplicantStaNetwork = iSupplicantStaNetwork;
+        mISupplicantVendorStaNetwork = iSupplicantVendorStaNetwork;
         mIfaceName = ifaceName;
         mWifiMonitor = monitor;
         mSystemSupportsFastBssTransition =
@@ -162,7 +167,8 @@ public class SupplicantStaNetworkHal {
             /** SSID */
             config.SSID = null;
             if (getSsid() && !ArrayUtils.isEmpty(mSsid)) {
-                config.SSID = NativeUtil.encodeSsid(mSsid);
+                byte[] byteArray = NativeUtil.byteArrayFromArrayList(mSsid);
+                config.SSID = NativeUtil.hexStringFromByteArray(byteArray);
             } else {
                 Log.e(TAG, "failed to read ssid");
                 return false;
@@ -325,6 +331,10 @@ public class SupplicantStaNetworkHal {
                 if (!setKeyMgmt(wifiConfigurationToSupplicantKeyMgmtMask(keyMgmtMask))) {
                     Log.e(TAG, "failed to set Key Management");
                     return false;
+                }
+                if (keyMgmtMask.get(WifiConfiguration.KeyMgmt.FILS_SHA256) ||
+                    keyMgmtMask.get(WifiConfiguration.KeyMgmt.FILS_SHA384)) {
+                    config.enterpriseConfig.setFieldValue(WifiEnterpriseConfig.EAP_ERP, "1");
                 }
             }
             /** Security Protocol */
@@ -581,12 +591,32 @@ public class SupplicantStaNetworkHal {
                 return false;
             }
 
+            /** SIM Number */
+            eapParam = eapConfig.getFieldValue(WifiEnterpriseConfig.KEY_SIMNUM);
+            if (!TextUtils.isEmpty(eapParam)
+                    && !setSimNumber(Integer.parseInt(eapParam))) {
+                Log.e(TAG, ssid + ": failed to set SIM number : " + eapParam);
+                return false;
+            }
+
             /** EAP Proactive Key Caching */
             eapParam = eapConfig.getFieldValue(WifiEnterpriseConfig.OPP_KEY_CACHING);
             if (!TextUtils.isEmpty(eapParam)
                     && !setEapProactiveKeyCaching(eapParam.equals("1") ? true : false)) {
                 Log.e(TAG, ssid + ": failed to set proactive key caching: " + eapParam);
                 return false;
+            }
+            /** EAP ERP */
+            eapParam = eapConfig.getFieldValue(WifiEnterpriseConfig.EAP_ERP);
+            if (!TextUtils.isEmpty(eapParam) && eapParam.equals("1")) {
+                if (!setEapErp(true)) {
+                    Log.e(TAG, ssid + ": failed to set eap erp");
+                    return false;
+                } else if (!setAuthAlg(0)) {
+                    /* Reset Auth Alg in order to allow supplicant to use both OPEN and FILS types */
+                    Log.e(TAG, ssid + ": failed to reset AuthAlgorithm");
+                    return false;
+                }
             }
             return true;
         }
@@ -622,6 +652,12 @@ public class SupplicantStaNetworkHal {
                     break;
                 case WifiConfiguration.KeyMgmt.FT_EAP:
                     mask |= ISupplicantStaNetwork.KeyMgmtMask.FT_EAP;
+                    break;
+                case WifiConfiguration.KeyMgmt.FILS_SHA256:
+                    mask |= ISupplicantVendorStaNetwork.VendorKeyMgmtMask.FILS_SHA256;
+                    break;
+                case WifiConfiguration.KeyMgmt.FILS_SHA384:
+                    mask |= ISupplicantVendorStaNetwork.VendorKeyMgmtMask.FILS_SHA384;
                     break;
                 case WifiConfiguration.KeyMgmt.WPA2_PSK: // This should never happen
                 default:
@@ -1395,6 +1431,34 @@ public class SupplicantStaNetworkHal {
             if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;
             try {
                 SupplicantStatus status =  mISupplicantStaNetwork.setProactiveKeyCaching(enable);
+                return checkStatusAndLogFailure(status, methodStr);
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+                return false;
+            }
+        }
+    }
+    /** See ISupplicantVendorStaNetwork.hal for documentation */
+    private boolean setEapErp(boolean enable) {
+        synchronized (mLock) {
+            final String methodStr = "setEapErp";
+            if (!checkISupplicantVendorStaNetworkAndLogFailure(methodStr)) return false;
+            try {
+                SupplicantStatus status =  mISupplicantVendorStaNetwork.setEapErp(enable);
+                return checkStatusAndLogFailure(status, methodStr);
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+                return false;
+            }
+        }
+    }
+    /** See ISupplicantVendorStaNetwork.hal for documentation */
+    private boolean setSimNumber(int SimNum) {
+        synchronized (mLock) {
+            final String methodStr = "setSimNumber";
+            if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;
+            try {
+                SupplicantStatus status =  mISupplicantVendorStaNetwork.setSimNumber(SimNum);
                 return checkStatusAndLogFailure(status, methodStr);
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
@@ -2419,6 +2483,17 @@ public class SupplicantStaNetworkHal {
             }
             return true;
         }
+    }
+
+    /**
+     * Returns false if ISupplicantVendorStaNetwork is null, and logs failure of methodStr
+     */
+    private boolean checkISupplicantVendorStaNetworkAndLogFailure(final String methodStr) {
+        if (mISupplicantVendorStaNetwork == null) {
+            Log.e(TAG, "Can't call " + methodStr + ", ISupplicantVendorStaNetwork is null");
+            return false;
+        }
+        return true;
     }
 
     private void handleRemoteException(RemoteException e, String methodStr) {

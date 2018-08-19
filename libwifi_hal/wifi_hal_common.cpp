@@ -23,6 +23,7 @@
 #include <android-base/logging.h>
 #include <cutils/misc.h>
 #include <cutils/properties.h>
+#include <sys/syscall.h>
 
 extern "C" int init_module(void *, unsigned long, const char *);
 extern "C" int delete_module(const char *, unsigned int);
@@ -57,17 +58,20 @@ static const char MODULE_FILE[] = "/proc/modules";
 #endif
 
 static int insmod(const char *filename, const char *args) {
-  void *module;
-  unsigned int size;
   int ret;
+  int fd;
 
-  module = load_file(filename, &size);
-  if (!module) return -1;
+  fd = TEMP_FAILURE_RETRY(open(filename, O_RDONLY | O_CLOEXEC));
+  if (fd < 0) {
+    PLOG(ERROR) << "Failed to open " << filename;
+    return -1;
+  }
 
-  ret = init_module(module, size, args);
+  ret = syscall(__NR_finit_module, fd, args, 0);
 
-  free(module);
-
+  close(fd);
+  if (ret < 0)
+    PLOG(ERROR) << "finit_module return: "<<ret;
   return ret;
 }
 
@@ -98,13 +102,13 @@ int wifi_change_driver_state(const char *state) {
   if (!state) return -1;
 
   do {
-    if (access(WIFI_DRIVER_STATE_CTRL_PARAM, W_OK) == 0)
+    if (access(WIFI_DRIVER_STATE_CTRL_PARAM, R_OK|W_OK) == 0)
       break;
-    usleep(200000);
+      usleep(200000);
   } while (--count > 0);
-    if (count == 0) {
-      PLOG(ERROR) << "Failed to access driver state control param " << strerror(errno) << ", " << errno;
-      return -1;
+  if (count == 0) {
+    PLOG(ERROR) << "Failed to access driver state control param " << strerror(errno) << ", " << errno;
+    return -1;
   }
 
   fd = TEMP_FAILURE_RETRY(open(WIFI_DRIVER_STATE_CTRL_PARAM, O_WRONLY));
@@ -207,12 +211,17 @@ int wifi_load_driver() {
     return 0;
   }
 
-  if (wifi_change_driver_state(WIFI_DRIVER_STATE_ON) < 0) return -1;
+  if (wifi_change_driver_state(WIFI_DRIVER_STATE_ON) < 0) {
+#ifdef WIFI_DRIVER_MODULE_PATH
+    PLOG(WARNING) << "Driver unloading, err='fail to change driver state'";
+    if (rmmod(DRIVER_MODULE_NAME) == 0) {
+      PLOG(DEBUG) << "Driver unloaded";
+    } else {
+      // Set driver prop to "ok", expect HL to restart Wi-Fi.
+      PLOG(DEBUG) << "Driver unload failed! set driver prop to 'ok'.";
+      property_set(DRIVER_PROP_NAME, "ok");
+    }
 #endif
-
-#ifdef WIFI_DRIVER_OPERSTATE_PATH
-  if (!is_wifi_driver_ready()) {
-    PLOG(ERROR) << "Wifi driver didn't get ready in time, giving up!";
     return -1;
   }
 #endif

@@ -26,16 +26,19 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiLinkLayerStats;
 import android.net.wifi.WifiScanner;
+import android.net.wifi.WifiSsid;
 import android.net.wifi.WifiWakeReasonAndCounts;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.content.Context;
 
 import com.android.internal.annotations.Immutable;
 import com.android.internal.util.HexDump;
 import com.android.server.connectivity.KeepalivePacketData;
 import com.android.server.wifi.util.FrameParser;
+import com.android.server.wifi.util.NativeUtil;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -65,14 +68,18 @@ public class WifiNative {
     private final SupplicantStaIfaceHal mSupplicantStaIfaceHal;
     private final WifiVendorHal mWifiVendorHal;
     private final WificondControl mWificondControl;
+    private final WifiInjector mWifiInjector;
+    private boolean mStaAndAPConcurrency = false;
 
     public WifiNative(String interfaceName, WifiVendorHal vendorHal,
-                      SupplicantStaIfaceHal staIfaceHal, WificondControl condControl) {
+                      SupplicantStaIfaceHal staIfaceHal, WificondControl condControl,
+                      WifiInjector wifiInjector) {
         mTAG = "WifiNative-" + interfaceName;
         mInterfaceName = interfaceName;
         mWifiVendorHal = vendorHal;
         mSupplicantStaIfaceHal = staIfaceHal;
         mWificondControl = condControl;
+        mWifiInjector = wifiInjector;
     }
 
     public String getInterfaceName() {
@@ -86,6 +93,10 @@ public class WifiNative {
         mWificondControl.enableVerboseLogging(verbose > 0 ? true : false);
         mSupplicantStaIfaceHal.enableVerboseLogging(verbose > 0);
         mWifiVendorHal.enableVerboseLogging(verbose > 0);
+    }
+
+    public void setStaSoftApConcurrency(boolean enable) {
+        mStaAndAPConcurrency = enable;
     }
 
    /********************************************************
@@ -126,15 +137,21 @@ public class WifiNative {
      * @return Pair of <Integer, IApInterface> to indicate the status and the associated wificond
      * AP interface binder handler (will be null on failure).
      */
-    public Pair<Integer, IApInterface> setupForSoftApMode() {
+    public Pair<Integer, IApInterface> setupForSoftApMode(String SapInterfaceName, boolean isDualMode) {
         if (!startHalIfNecessary(false)) {
             Log.e(mTAG, "Failed to start HAL for AP mode");
             return Pair.create(SETUP_FAILURE_HAL, null);
         }
-        IApInterface iApInterface = mWificondControl.setupDriverForSoftApMode();
+
+        if (SapInterfaceName != null) {
+             addOrRemoveInterface(SapInterfaceName, true, isDualMode);
+        }
+
+        IApInterface iApInterface = mWificondControl.QcSetupDriverForSoftApMode(isDualMode);
         if (iApInterface == null) {
             return Pair.create(SETUP_FAILURE_WIFICOND, null);
         }
+
         return Pair.create(SETUP_SUCCESS, iApInterface);
     }
 
@@ -150,6 +167,119 @@ public class WifiNative {
             // TODO(b/34859006): Handle failures.
             Log.e(mTAG, "Failed to teardown interfaces from Wificond");
         }
+    }
+
+    /**
+     * Teardown STA mode configurations in wifi native.
+     *
+     * 1. Tears down all the STA interfaces from Wificond.
+     * 2. Stops the Wifi HAL for STA interface.
+     *
+     * @return Returns true on success.
+     */
+    public boolean tearDownSta() {
+        if (!mWificondControl.tearDownStaInterfaces()) {
+            Log.e(mTAG, "Failed to teardown Sta interfaces from Wificond");
+            return false;
+        }
+        return stopHalIfaceIfNecessary(true);
+    }
+
+    /**
+     * Teardown AP mode configurations in wifi native.
+     *
+     * 1. Tears down all the AP interfaces from Wificond.
+     * 2. Stops the Wifi HAL for AP interface.
+     *
+     * @return Returns true on success.
+     */
+    public boolean tearDownAp() {
+        if (!mWificondControl.tearDownApInterfaces()) {
+            Log.e(mTAG, "Failed to teardown Ap interfaces from Wificond");
+            return false;
+        }
+        return stopHalIfaceIfNecessary(false);
+    }
+
+    /**
+     * Stops the HAL, if vendor HAL is supported.
+     */
+    private void stopHalIfNecessary() {
+        if (!mWifiVendorHal.isVendorHalSupported()) {
+            Log.i(mTAG, "Vendor HAL not supported, Ignore stop...");
+            return;
+        }
+        mWifiVendorHal.stopVendorHal();
+    }
+
+    /**
+     * Run QSAP command via wificond. It can perform following:
+     * 1. create virtual interface (create softap0)
+     * 2. remove virtual interface (remove softap0)
+     * 3. Set hostapd configuraiton (qccmd set interface=softap0)
+     * 4. Start/Stop SAP (startap/stopap). Note: use IApInterface.startHostapd()/IApInterface.stopHostapd() instead.
+     *
+     * @return Returns true on success.
+     */
+    public boolean runQsapCmd(String cmd, String arg) {
+        String strcmd = (arg != null) ? cmd + arg : cmd;
+        if (!mWificondControl.runQsapCmd(strcmd)) {
+            Log.e(mTAG, "Failed to run QSAP command = " + strcmd);
+            return false;
+        }
+        return true;
+    }
+
+   /**
+    * For SAP / SAP + SAP need to create new interface.
+    * This is a synchronous call.
+    *
+    * @return Returns true on success.
+    */
+    public boolean addOrRemoveInterface(String interfaceName, boolean add, boolean isBridge) {
+        boolean status = false;
+        if (interfaceName != null && !isBridge) {
+            if (add && runQsapCmd("softap create ", interfaceName)) {
+                Log.d(mTAG, "created SAP interface " + interfaceName);
+                status = true;
+            } else if (!add && runQsapCmd("softap remove ", interfaceName)) {
+                Log.d(mTAG, "removed SAP interface " + interfaceName);
+                status = true;
+            } else {
+                Log.e(mTAG, "Failed to add/remove SAP interface " + interfaceName);
+            }
+        } else if (interfaceName != null && isBridge) {
+            // Create bridge interface.
+            if (add && runQsapCmd("softap bridge create ", interfaceName)) {
+                Log.d(mTAG, "created bridge SAP interface " + interfaceName);
+            } else if (!add && runQsapCmd("softap bridge remove ", interfaceName)) {
+                Log.d(mTAG, "removed bridge SAP interface " + interfaceName);
+            } else {
+                Log.e(mTAG, "Failed to add/remove Bridge SAP interface " + interfaceName);
+                return false;
+            }
+
+            /* Get dual softAp Interface name from overlay config.xml */
+            String[] dualApInterfaces = mWifiInjector.getWifiApConfigStore().getDualSapInterfaces();
+            if (dualApInterfaces == null || dualApInterfaces.length != 2) {
+                Log.e(mTAG, "dualApInterfaces is not set or length is not 2");
+                return false;
+            }
+
+            // create sap0 and sap1
+            if (add && runQsapCmd("softap create ", dualApInterfaces[0])
+                    && runQsapCmd("softap create ", dualApInterfaces[1])) {
+                Log.d(mTAG, "created SAP interfaces " + dualApInterfaces[0] + " and " + dualApInterfaces[1]);
+                status = true;
+            } else if (!add && runQsapCmd("softap remove ", dualApInterfaces[0])
+                            && runQsapCmd("softap remove ", dualApInterfaces[1])) {
+                Log.d(mTAG, "removed SAP interfaces " + dualApInterfaces[0] + " and " + dualApInterfaces[1]);
+                status = true;
+            } else {
+                Log.e(mTAG, "Failed to add/remove SAP interfaces " + dualApInterfaces[0] + " and " + dualApInterfaces[1]);
+            }
+        }
+        return status;
     }
 
     /********************************************************
@@ -442,6 +572,26 @@ public class WifiNative {
     }
 
     /**
+     * Flush all previously configured HLPs.
+     *
+     * @return true if request is sent successfully, false otherwise.
+     */
+    public boolean flushAllHlp() {
+        return mSupplicantStaIfaceHal.flushAllHlp();
+    }
+
+    /**
+     * Set FILS HLP packet.
+     *
+     * @param dst Destination MAC address.
+     * @param hlpPacket Hlp Packet data in hex.
+     * @return true if request is sent successfully, false otherwise.
+     */
+    public boolean addHlpReq(String dst, String hlpPacket) {
+        return mSupplicantStaIfaceHal.addHlpReq(dst, hlpPacket);
+    }
+
+    /**
      * Initiate TDLS discover and setup or teardown with the specified peer.
      *
      * @param macAddr MAC Address of the peer.
@@ -689,8 +839,69 @@ public class WifiNative {
      */
     public boolean migrateNetworksFromSupplicant(Map<String, WifiConfiguration> configs,
                                                  SparseArray<Map<String, String>> networkExtras) {
-        return mSupplicantStaIfaceHal.loadNetworks(configs, networkExtras);
+        if (mSupplicantStaIfaceHal.loadNetworks(configs, networkExtras)) {
+            for (Map.Entry<String, WifiConfiguration> entry : configs.entrySet()) {
+                WifiConfiguration config = entry.getValue();
+                byte[] ssid_bytes = NativeUtil.hexStringToByteArray(config.SSID);
+                ArrayList<Byte> ssid = NativeUtil.byteArrayToArrayList(ssid_bytes);
+                ArrayList<Byte> out_ssid = mWificondControl.getWifiGbkHistory(ssid);
+                Log.d(mTAG, "ssid arraylist = " + ssid );
+                Log.d(mTAG, "out_ssid arraylist = " + out_ssid );
+
+                if (ssid != null && out_ssid != null) {
+                config.SSID = NativeUtil.encodeSsid(out_ssid);
+                }
+
+                Log.d(mTAG, "after convert, ssid = " + config.SSID + ", bssid = " + config.BSSID);
+            }
+        return true;
+        }
+        Log.e(mTAG, "Failed to load networks!");
+        return false;
     }
+
+    // wifigbk ++
+    public String ssidStrFromGbkHistory(String ssid_str) {
+        if (ssid_str == null || ssid_str.length() == 0) {
+            return ssid_str;
+        }
+
+        ArrayList<Byte> ssid = null;
+        ArrayList<Byte> out_ssid = null;
+
+        try {
+            ssid = NativeUtil.decodeSsid(ssid_str);
+            out_ssid = mWificondControl.getWifiGbkHistory(ssid);
+        } catch (IllegalArgumentException e) {
+            Log.i(mTAG, "Illegal argument " + ssid_str);
+            return ssid_str;
+        }
+
+        if (ssid != null && !ssid.equals(out_ssid)) {
+            byte[] out_ssid_bytes = NativeUtil.byteArrayFromArrayList(out_ssid);
+            return NativeUtil.hexStringFromByteArray(out_ssid_bytes);
+        }
+
+        return ssid_str;
+    }
+
+    public WifiSsid wifiSsidFromGbkHistory(WifiSsid ssid_st) {
+        if (ssid_st == null || ssid_st.isHidden()) {
+            return ssid_st;
+        }
+
+        byte[] ssid_array = ssid_st.getOctets();
+        ArrayList<Byte> ssid = NativeUtil.byteArrayToArrayList(ssid_array);
+        ArrayList<Byte> out_ssid = mWificondControl.getWifiGbkHistory(ssid);
+
+        if (ssid != null && !ssid.equals(out_ssid)) {
+            byte[] out_ssid_bytes = NativeUtil.byteArrayFromArrayList(out_ssid);
+            return WifiSsid.createFromByteArray(out_ssid_bytes);
+        }
+
+        return ssid_st;
+    }
+    // wifigbk--
 
     /**
      * Add the provided network configuration to wpa_supplicant and initiate connection to it.
@@ -708,6 +919,7 @@ public class WifiNative {
     public boolean connectToNetwork(WifiConfiguration configuration) {
         // Abort ongoing scan before connect() to unblock connection request.
         mWificondControl.abortScan();
+        configuration.SSID = ssidStrFromGbkHistory(configuration.SSID);
         return mSupplicantStaIfaceHal.connectToNetwork(configuration);
     }
 
@@ -727,6 +939,7 @@ public class WifiNative {
     public boolean roamToNetwork(WifiConfiguration configuration) {
         // Abort ongoing scan before connect() to unblock roaming request.
         mWificondControl.abortScan();
+        configuration.SSID = ssidStrFromGbkHistory(configuration.SSID);
         return mSupplicantStaIfaceHal.roamToNetwork(configuration);
     }
 
@@ -845,18 +1058,21 @@ public class WifiNative {
             Log.i(mTAG, "Vendor HAL not supported, Ignore start...");
             return true;
         }
+        if (mStaAndAPConcurrency)
+            return mWifiVendorHal.startConcurrentVendorHal(isStaMode);
+
         return mWifiVendorHal.startVendorHal(isStaMode);
     }
 
     /**
-     * Stops the HAL, if vendor HAL is supported.
+     * Stops the Iface HAL, if vendor HAL is supported.
      */
-    private void stopHalIfNecessary() {
+    private boolean stopHalIfaceIfNecessary(boolean isSta) {
         if (!mWifiVendorHal.isVendorHalSupported()) {
-            Log.i(mTAG, "Vendor HAL not supported, Ignore stop...");
-            return;
+            Log.i(mTAG, "Vendor Iface HAL not supported, Ignore stop...");
+            return false;
         }
-        mWifiVendorHal.stopVendorHal();
+        return mWifiVendorHal.stopVendorHalIface(isSta);
     }
 
     /**

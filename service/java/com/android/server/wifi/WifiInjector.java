@@ -124,6 +124,7 @@ public class WifiInjector {
     private final WifiStateTracker mWifiStateTracker;
     private final Runtime mJavaRuntime;
     private final SelfRecovery mSelfRecovery;
+    private BaseWifiDiagnostics mWifiDiagnostics;
 
     private final boolean mUseRealLogger;
 
@@ -172,7 +173,7 @@ public class WifiInjector {
         mWificondControl = new WificondControl(this, mWifiMonitor,
                 new CarrierNetworkConfig(mContext));
         mWifiNative = new WifiNative(SystemProperties.get("wifi.interface", "wlan0"),
-                mWifiVendorHal, mSupplicantStaIfaceHal, mWificondControl);
+                mWifiVendorHal, mSupplicantStaIfaceHal, mWificondControl, this);
         mWifiP2pMonitor = new WifiP2pMonitor(this);
         mSupplicantP2pIfaceHal = new SupplicantP2pIfaceHal(mWifiP2pMonitor);
         mWifiP2pNative = new WifiP2pNative(SystemProperties.get("wifi.direct.interface", "p2p0"),
@@ -181,7 +182,7 @@ public class WifiInjector {
         // Now get instances of all the objects that depend on the HandlerThreads
         mTrafficPoller =  new WifiTrafficPoller(mContext, mWifiServiceHandlerThread.getLooper(),
                 mWifiNative.getInterfaceName());
-        mCountryCode = new WifiCountryCode(mWifiNative,
+        mCountryCode = new WifiCountryCode(mContext, mWifiNative,
                 SystemProperties.get(BOOT_DEFAULT_WIFI_COUNTRY_CODE),
                 mContext.getResources()
                         .getBoolean(R.bool.config_wifi_revert_country_code_on_cellular_loss));
@@ -230,6 +231,9 @@ public class WifiInjector {
                 wifiStateMachineLooper, UserManager.get(mContext),
                 this, mBackupManagerProxy, mCountryCode, mWifiNative,
                 new WrongPasswordNotifier(mContext, mFrameworkFacade));
+        mWifiDiagnostics = this.makeWifiDiagnostics(mWifiNative);
+        if (mWifiStateMachine != null)
+            mWifiStateMachine.setWifiDiagnostics(mWifiDiagnostics);
         mCertManager = new WifiCertManager(mContext);
         mOpenNetworkNotifier = new OpenNetworkNotifier(mContext,
                 mWifiStateMachineHandlerThread.getLooper(), mFrameworkFacade, mClock, mWifiMetrics,
@@ -238,7 +242,8 @@ public class WifiInjector {
                 new ConnectToNetworkNotificationBuilder(mContext, mFrameworkFacade));
         mLockManager = new WifiLockManager(mContext, BatteryStatsService.getService());
         mWifiController = new WifiController(mContext, mWifiStateMachine, mSettingsStore,
-                mLockManager, mWifiServiceHandlerThread.getLooper(), mFrameworkFacade);
+                mLockManager, mWifiServiceHandlerThread.getLooper(), mFrameworkFacade,
+                mWifiApConfigStore);
         mSelfRecovery = new SelfRecovery(mWifiController, mClock);
         mWifiLastResortWatchdog = new WifiLastResortWatchdog(mSelfRecovery, mWifiMetrics);
         mWifiMulticastLockManager = new WifiMulticastLockManager(mWifiStateMachine,
@@ -386,7 +391,7 @@ public class WifiInjector {
         return new SoftApManager(mWifiServiceHandlerThread.getLooper(),
                                  mWifiNative, mCountryCode.getCountryCode(),
                                  listener, apInterface, nmService,
-                                 mWifiApConfigStore, config, mWifiMetrics);
+                                 mWifiApConfigStore, config, mWifiMetrics, this, mContext);
     }
 
     /**

@@ -343,6 +343,7 @@ public class XmlUtil {
         public static final String XML_TAG_LAST_CONNECT_UID = "LastConnectUid";
         public static final String XML_TAG_IS_LEGACY_PASSPOINT_CONFIG = "IsLegacyPasspointConfig";
         public static final String XML_TAG_ROAMING_CONSORTIUM_OIS = "RoamingConsortiumOIs";
+        public static final String XML_TAG_SHARE_THIS_AP = "ShareThisAp";
 
         /**
          * Write WepKeys to the XML stream.
@@ -384,6 +385,7 @@ public class XmlUtil {
             XmlUtil.writeNextValue(out, XML_TAG_CONFIG_KEY, configuration.configKey());
             XmlUtil.writeNextValue(out, XML_TAG_SSID, configuration.SSID);
             XmlUtil.writeNextValue(out, XML_TAG_BSSID, configuration.BSSID);
+            XmlUtil.writeNextValue(out, XML_TAG_SHARE_THIS_AP, configuration.shareThisAp);
             XmlUtil.writeNextValue(out, XML_TAG_PRE_SHARED_KEY, configuration.preSharedKey);
             writeWepKeysToXml(out, configuration.wepKeys);
             XmlUtil.writeNextValue(out, XML_TAG_WEP_TX_KEY_INDEX, configuration.wepTxKeyIndex);
@@ -520,6 +522,9 @@ public class XmlUtil {
                         break;
                     case XML_TAG_BSSID:
                         configuration.BSSID = (String) value;
+                        break;
+                    case XML_TAG_SHARE_THIS_AP:
+                        configuration.shareThisAp = (boolean) value;
                         break;
                     case XML_TAG_PRE_SHARED_KEY:
                         configuration.preSharedKey = (String) value;
@@ -979,6 +984,7 @@ public class XmlUtil {
         public static final String XML_TAG_PHASE2_METHOD = "Phase2Method";
         public static final String XML_TAG_PLMN = "PLMN";
         public static final String XML_TAG_REALM = "Realm";
+        public static final String XML_TAG_SIMNUM = "SimNum";
 
         /**
          * Write the WifiEnterpriseConfig data elements from the provided config to the XML
@@ -1017,6 +1023,7 @@ public class XmlUtil {
             XmlUtil.writeNextValue(out, XML_TAG_PHASE2_METHOD, enterpriseConfig.getPhase2Method());
             XmlUtil.writeNextValue(out, XML_TAG_PLMN, enterpriseConfig.getPlmn());
             XmlUtil.writeNextValue(out, XML_TAG_REALM, enterpriseConfig.getRealm());
+            XmlUtil.writeNextValue(out, XML_TAG_SIMNUM, enterpriseConfig.getSimNum());
         }
 
         /**
@@ -1097,6 +1104,17 @@ public class XmlUtil {
                         break;
                     case XML_TAG_REALM:
                         enterpriseConfig.setRealm((String) value);
+                        break;
+                    case XML_TAG_SIMNUM:
+                        int sim_num;
+                        try {
+                            sim_num = Integer.parseInt((String) value);
+                        } catch (NumberFormatException e) {
+                            sim_num = -1;
+                        }
+                        if (sim_num > 0) {
+                            enterpriseConfig.setSimNum(sim_num);
+                        }
                         break;
                     default:
                         throw new XmlPullParserException(
